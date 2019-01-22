@@ -107,7 +107,7 @@ class ReactImgViewer extends React.Component<IProps, IState> {
   public handleTouchEnd = (e: any) => {
     const { isAnimating } = this.state;
 
-    if (!this.isDragging || isAnimating) {
+    if (isAnimating) {
       return;
     }
 
@@ -133,9 +133,9 @@ class ReactImgViewer extends React.Component<IProps, IState> {
 
   public handleSwipeStart = (touch: any) => {
     this.currentAction = Action.SWIPE;
-    this.startPosX = touch.clientX;
-    this.startPosY = touch.clientY;
-    this.startTime = Date.now();
+    this.startPosX = this.endPosX = touch.clientX;
+    this.startPosY = this.endPosY = touch.clientY;
+    this.startTime = this.endTime = Date.now();
   }
 
   public handleSwipeMove = (touch: any) => {
@@ -152,6 +152,12 @@ class ReactImgViewer extends React.Component<IProps, IState> {
     const { keyIndex } = this.state;
 
     const diffX = this.endPosX - this.startPosX;
+
+    if (diffX === 0) {
+      // click event
+      return;
+    }
+
     const duration = Date.now() - this.startTime;
     const threshold = this.getViewerRect().width / 2;
     const isFlick = duration < 250 && Math.abs(diffX) > 20;
@@ -169,6 +175,10 @@ class ReactImgViewer extends React.Component<IProps, IState> {
 
     this.startPosX = 0;
     this.startPosY = 0;
+    this.startTime = 0;
+
+    this.endPosX = 0;
+    this.endPosY = 0;
     this.endTime = 0;
 
     this.setState({
