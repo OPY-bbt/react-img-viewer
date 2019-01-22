@@ -1,7 +1,8 @@
 {
   "extends": ["tslint:recommended", "tslint-react"],
   "rules": {
-    "object-literal-sort-keys": false
+    "object-literal-sort-keys": false,
+    "member-access": [true, "no-public"],
   },
   "linterOptions": {
     "exclude": [
