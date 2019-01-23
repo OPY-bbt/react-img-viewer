@@ -3,7 +3,12 @@ import "./index.css";
 
 const MIN_ZOOM_LEVEL = 1;
 const MAX_ZOOM_LEVEL = 5;
+const CLICK_DIFF = 15;
+const CLICK_TIMEOUT = 50;
+const DOUBLE_CLICK_TIMEOUT = 200;
 enum Action { NONE, SWIPE, PINCH, MOVE }
+
+type TouchEvent = React.TouchEvent;
 
 type Props = {
   visible: boolean;
@@ -16,12 +21,12 @@ type Props = {
   children?: never;
 } & typeof defaultProps;
 
-type State = typeof initialState
+type State = typeof initialState;
 
 const defaultProps = Object.freeze({});
 
 const initialState = Object.freeze({
-  zoomLevel: 0,
+  zoomLevel: 1,
   offsetX: 0,
   offsetY: 0,
   isAnimating: false,
@@ -30,12 +35,14 @@ const initialState = Object.freeze({
 });
 
 class ReactImgViewer extends React.Component<Props, State> {
+  static readonly defaultProps = {};
 
   static getTransform({ x = 0, y = 0, zoom = 1 }) {
     return {
       transform: `translate(${x}px, ${y}px) scale(${zoom}, ${zoom})`,
     };
   }
+  readonly state = initialState;
 
   isDragging: boolean = false;
 
@@ -47,10 +54,9 @@ class ReactImgViewer extends React.Component<Props, State> {
   endPosY: number;
   endTime: number;
 
-  currentAction: Action = Action.NONE;
+  lastClickTime: number;
 
-  static readonly defaultProps = {};
-  readonly state  = initialState
+  currentAction: Action = Action.NONE;
 
   getViewerRect = () => {
     return {
@@ -63,96 +69,116 @@ class ReactImgViewer extends React.Component<Props, State> {
     };
   }
 
-  handleTouchStart = (e: any) => {
-    const { isAnimating } = this.state;
-
-    if (this.isDragging || isAnimating) {
-      return;
-    }
-    this.isDragging = true;
-
-    switch (e.targetTouches.length) {
+  handleTouchStart = (event: TouchEvent) => {
+    switch (event.targetTouches.length) {
       case 1:
-        this.handleMoveOrSwipe(e.targetTouches[0]);
+        this.handleMoveOrSwipeStart(event);
         break;
       case 2:
+        this.handlePinchStart(event);
         break;
       default:
         break;
     }
   }
 
-  handleTouchMove = (e: any) => {
-    const { isAnimating } = this.state;
-
-    if (!this.isDragging || isAnimating) {
-      return;
-    }
-
+  handleTouchMove = (event: TouchEvent) => {
     switch (this.currentAction) {
       case Action.SWIPE:
-        this.handleSwipeMove(e.targetTouches[0]);
+        this.handleSwipeMove(event);
         break;
+      case Action.MOVE:
+        this.handleMove(event);
       default:
         break;
     }
   }
 
-  handleTouchEnd = (e: any) => {
+  handleTouchEnd = (event: TouchEvent) => {
+    switch (this.currentAction) {
+      case Action.SWIPE:
+        this.handleSwipeEnd(event);
+        break;
+      case Action.MOVE:
+        this.handleMoveEnd(event);
+      default:
+        break;
+    }
+
+    this.currentAction = Action.NONE;
+  }
+
+  handleMoveOrSwipeStart = (event: TouchEvent) => {
+    const { zoomLevel } = this.state;
+    const touch = event.targetTouches[0];
+    this.currentAction = zoomLevel <= MIN_ZOOM_LEVEL ?
+      Action.SWIPE : Action.MOVE;
+    this.startPosX = this.endPosX = touch.clientX;
+    this.startPosY = this.endPosY = touch.clientY;
+    this.startTime = this.endTime = event.timeStamp;
+  }
+
+  handleMove = (event: TouchEvent) => {
+    this.endTime = event.timeStamp;
+  }
+
+  handleMoveEnd = (event: TouchEvent) => {
+    this.handleClick(event);
+    this.currentAction = Action.NONE;
+  }
+
+  handleClick(event: TouchEvent) {
+    // refer: https://stackoverflow.com/questions/49920582/why-mobile-safari-touchevents-have-negative-timestamp
+    if (Math.abs(event.timeStamp - this.lastClickTime) <= DOUBLE_CLICK_TIMEOUT) {
+      this.handleDoubleClick(event);
+      this.lastClickTime = 0;
+    } else {
+      // handle click
+      this.lastClickTime = event.timeStamp;
+    }
+  }
+
+  handleDoubleClick(event: TouchEvent) {
+    const { zoomLevel } = this.state;
+    this.setState({
+      zoomLevel: zoomLevel === MIN_ZOOM_LEVEL ?
+        MAX_ZOOM_LEVEL : MIN_ZOOM_LEVEL,
+    });
+  }
+
+  handleSwipeMove = (event: TouchEvent) => {
+    const touch = event.targetTouches[0];
     const { isAnimating } = this.state;
 
     if (isAnimating) {
       return;
     }
 
-    switch (this.currentAction) {
-      case Action.SWIPE:
-        this.handleSwipeEnd();
-        break;
-      default:
-        break;
-    }
-
-    this.isDragging = false;
-    this.currentAction = Action.NONE;
-  }
-
-  handleMoveOrSwipe = (touch: any) => {
-    if (this.state.zoomLevel <= MIN_ZOOM_LEVEL) {
-      this.handleSwipeStart(touch);
-    } else {
-      this.handleMoveStart(touch);
-    }
-  }
-
-  handleSwipeStart = (touch: any) => {
-    this.currentAction = Action.SWIPE;
-    this.startPosX = this.endPosX = touch.clientX;
-    this.startPosY = this.endPosY = touch.clientY;
-    this.startTime = this.endTime = Date.now();
-  }
-
-  handleSwipeMove = (touch: any) => {
     this.setState({
       offsetX: touch.clientX - this.startPosX,
     });
 
     this.endPosX = touch.clientX;
     this.endPosY = touch.clientY;
-    this.endTime = Date.now();
+    this.endTime = event.timeStamp;
   }
 
-  handleSwipeEnd = () => {
+  handleSwipeEnd = (event: TouchEvent) => {
     const { keyIndex } = this.state;
 
     const diffX = this.endPosX - this.startPosX;
+    const diffY = this.endPosY - this.startPosY;
+    const diffTime = this.endTime - this.startTime;
 
-    if (diffX === 0) {
+    if (Math.abs(diffX) <= CLICK_DIFF &&
+        Math.abs(diffY) <= CLICK_DIFF &&
+        diffTime <= CLICK_TIMEOUT) {
       // click event
+      this.handleClick(event);
       return;
     }
 
-    const duration = Date.now() - this.startTime;
+    const duration = event.timeStamp - this.startTime;
     const threshold = this.getViewerRect().width / 2;
     const isFlick = duration < 250 && Math.abs(diffX) > 20;
 
@@ -167,23 +193,11 @@ class ReactImgViewer extends React.Component<Props, State> {
       // restore
     }
 
-    this.startPosX = 0;
-    this.startPosY = 0;
-    this.startTime = 0;
-
-    this.endPosX = 0;
-    this.endPosY = 0;
-    this.endTime = 0;
-
     this.setState({
       isAnimating: true,
       offsetX: 0,
       nextKeyIndex,
     });
-  }
-
-  handleMoveStart = (touch: any) => {
-    this.currentAction = Action.MOVE;
   }
 
   handleTransitionEnd = () => {
@@ -202,9 +216,15 @@ class ReactImgViewer extends React.Component<Props, State> {
     });
   }
 
+  handlePinchStart = (event: TouchEvent) => {
+    // const [touch1, touch2] = event.targetTouches;
+    // this.currentAction = Action.PINCH;
+  }
+
   render() {
     const { prevSrc, mainSrc, nextSrc, visible } = this.props;
-    const { offsetX, isAnimating, nextKeyIndex, keyIndex  }  = this.state;
+    const { offsetX, isAnimating, nextKeyIndex, keyIndex,
+      zoomLevel  }  = this.state;
 
     if (!visible) {
       return null;
@@ -222,7 +242,11 @@ class ReactImgViewer extends React.Component<Props, State> {
     const imgs = (
       [prevSrc, mainSrc, nextSrc].map((img, idx) => (
         <div key={`${img}-${keyIndex + idx - 1}`} className="riv_img-container">
-          <img className="riv_img" src={img} />
+          <img
+            className="riv_img"
+            src={img}
+            style={ReactImgViewer.getTransform({zoom: idx === 1 ? zoomLevel : 1})}
+          />
         </div>
       ))
     );
