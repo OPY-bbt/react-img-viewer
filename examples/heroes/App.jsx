@@ -55,6 +55,7 @@ class App extends React.Component {
           visible={isOpen}
           onNext={this.handleNext}
           onPrev={this.handlePrev}
+          title="heroes"
         />
       </div>
     );

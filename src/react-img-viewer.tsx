@@ -1,8 +1,12 @@
 import * as React from "react";
 import "./index.css";
 
+import {
+  cls,
+} from "./utils";
+
 const MIN_ZOOM_LEVEL = 1;
-const MAX_ZOOM_LEVEL = 5;
+const MAX_ZOOM_LEVEL = 3;
 const CLICK_DIFF = 15;
 const CLICK_TIMEOUT = 50;
 const DOUBLE_CLICK_TIMEOUT = 200;
@@ -19,6 +23,7 @@ type Props = {
   onNext: () => void;
   onPrev: () => void;
   children?: never;
+  title: string;
 } & typeof defaultProps;
 
 type State = typeof initialState;
@@ -27,11 +32,18 @@ const defaultProps = Object.freeze({});
 
 const initialState = Object.freeze({
   zoomLevel: 1,
+
   offsetX: 0,
   offsetY: 0,
+
+  offsetImgX: 0,
+  offsetImgY: 0,
+
   isAnimating: false,
   keyIndex: 0,
   nextKeyIndex: 0,
+
+  isZooming: false,
 });
 
 class ReactImgViewer extends React.Component<Props, State> {
@@ -46,17 +58,24 @@ class ReactImgViewer extends React.Component<Props, State> {
 
   isDragging: boolean = false;
 
-  startPosX: number;
-  startPosY: number;
-  startTime: number;
+  startPosX: number = 0;
+  startPosY: number = 0;
+  startTime: number = 0;
 
-  endPosX: number;
-  endPosY: number;
-  endTime: number;
+  endPosX: number = 0;
+  endPosY: number = 0;
+  endTime: number = 0;
 
-  lastClickTime: number;
+  lastClickTime: number = 0;
 
   currentAction: Action = Action.NONE;
+
+  refContainer: React.RefObject<HTMLDivElement> = React.createRef();
+
+  componentDidMount() {
+    this.refContainer.current.addEventListener("touchmove",
+      (e) => e.preventDefault());
+  }
 
   getViewerRect = () => {
     return {
@@ -88,7 +107,7 @@ class ReactImgViewer extends React.Component<Props, State> {
         this.handleSwipeMove(event);
         break;
       case Action.MOVE:
-        this.handleMove(event);
+        this.handlePanMove(event);
       default:
         break;
     }
@@ -100,7 +119,7 @@ class ReactImgViewer extends React.Component<Props, State> {
         this.handleSwipeEnd(event);
         break;
       case Action.MOVE:
-        this.handleMoveEnd(event);
+        this.handlePanMoveEnd(event);
       default:
         break;
     }
@@ -118,11 +137,20 @@ class ReactImgViewer extends React.Component<Props, State> {
     this.startTime = this.endTime = event.timeStamp;
   }
 
-  handleMove = (event: TouchEvent) => {
+  handlePanMove = (event: TouchEvent) => {
+    const touch = event.targetTouches[0];
+
+    this.setState({
+      offsetImgX: touch.clientX - this.startPosX,
+      offsetImgY: touch.clientY - this.startPosY,
+    });
+
+    this.endPosX = touch.clientX;
+    this.endPosY = touch.clientY;
     this.endTime = event.timeStamp;
   }
 
-  handleMoveEnd = (event: TouchEvent) => {
+  handlePanMoveEnd = (event: TouchEvent) => {
     this.handleClick(event);
     this.currentAction = Action.NONE;
   }
@@ -143,6 +171,7 @@ class ReactImgViewer extends React.Component<Props, State> {
     this.setState({
       zoomLevel: zoomLevel === MIN_ZOOM_LEVEL ?
         MAX_ZOOM_LEVEL : MIN_ZOOM_LEVEL,
+      isZooming: true,
     });
   }
 
@@ -200,7 +229,7 @@ class ReactImgViewer extends React.Component<Props, State> {
     });
   }
 
-  handleTransitionEnd = () => {
+  handleContainerTransitionEnd = () => {
     const { onNext, onPrev } = this.props;
     const { nextKeyIndex, keyIndex } = this.state;
 
@@ -216,15 +245,29 @@ class ReactImgViewer extends React.Component<Props, State> {
     });
   }
 
+  handleImgTransitionEnd = () => {
+    this.setState({
+      isZooming: false,
+    });
+  }
+
   handlePinchStart = (event: TouchEvent) => {
     // const [touch1, touch2] = event.targetTouches;
     // this.currentAction = Action.PINCH;
   }
 
   render() {
-    const { prevSrc, mainSrc, nextSrc, visible } = this.props;
-    const { offsetX, isAnimating, nextKeyIndex, keyIndex,
-      zoomLevel  }  = this.state;
+    const {
+      prevSrc, mainSrc, nextSrc,
+      visible, title,
+    } = this.props;
+
+    const {
+      offsetX, offsetY,
+      offsetImgX, offsetImgY,
+      isAnimating, nextKeyIndex, keyIndex,
+      zoomLevel, isZooming,
+    }  = this.state;
 
     if (!visible) {
       return null;
@@ -232,36 +275,62 @@ class ReactImgViewer extends React.Component<Props, State> {
 
     const diffIndex =  nextKeyIndex - keyIndex;
 
-    const style = {
+    const containerStyle = {
       ...ReactImgViewer.getTransform({
         x: offsetX - this.getViewerRect().width * (1 + diffIndex),
       }),
       transition: isAnimating ? `transform .3s` : "none",
     };
 
+    const imgStyle = {
+      ...ReactImgViewer.getTransform({
+        zoom: zoomLevel,
+        x: offsetImgX,
+        y: offsetImgY,
+      }),
+      transition: isZooming ? `transform .3s` : "none",
+    };
+
     const imgs = (
       [prevSrc, mainSrc, nextSrc].map((img, idx) => (
-        <div key={`${img}-${keyIndex + idx - 1}`} className="riv_img-container">
+        <div key={`${img}-${keyIndex + idx - 1}`} className="riv-img__container">
           <img
-            className="riv_img"
+            className="riv-img"
             src={img}
-            style={ReactImgViewer.getTransform({zoom: idx === 1 ? zoomLevel : 1})}
+            style={idx === 1 ? imgStyle : {}}
+            onTransitionEnd={this.handleImgTransitionEnd}
           />
         </div>
       ))
     );
 
+    const toolbarCls = cls({
+      "riv-toolbar__container": true,
+      "riv-toolbar__container--hide": zoomLevel !== MIN_ZOOM_LEVEL,
+      "riv-toolbar__container--show": zoomLevel === MIN_ZOOM_LEVEL,
+    });
+
     return (
-      <div className="riv_outer-container">
+      <div
+        className="riv-outer__container"
+        ref={this.refContainer}
+      >
         <div
-          className="riv_inner-container"
+          className="riv-inner__container"
           onTouchStart={this.handleTouchStart}
           onTouchMove={this.handleTouchMove}
           onTouchEnd={this.handleTouchEnd}
-          style={style}
-          onTransitionEnd={this.handleTransitionEnd}
+          style={containerStyle}
+          onTransitionEnd={this.handleContainerTransitionEnd}
         >
           {imgs}
+        </div>
+        <div className={toolbarCls}>
+          <ul className="riv-toolbar riv-toolbar__left">
+            <li className="riv-toolbar__item">
+              <span className="riv-toolbar__title">{title}</span>
+            </li>
+          </ul>
         </div>
       </div>
     );
